@@ -56,8 +56,9 @@ export class ColdGas {
     alive.forEach((p,i)=>{this.attributes.center.setXYZ(i,p.position.x,p.position.y,p.position.z);this.attributes.size.setXY(i,p.currentSize*1.4,p.currentSize);this.attributes.rotation.setX(i,p.rotation+p.age*.18);this.attributes.opacity.setX(i,p.alpha);this.attributes.seed.setX(i,p.seed);});
     this.mesh.geometry.instanceCount=alive.length;for(const attribute of Object.values(this.attributes))attribute.needsUpdate=true;this.aliveCount=alive.length;
   }
-  renderDepth(renderer,scene,camera){
+  renderDepth(renderer,scene,camera,cutaway=false){
     if(!this.aliveCount)return;
+    if(cutaway){this.material.uniforms.uSoft.value=0;return;}
     renderer.getDrawingBufferSize(this.size);const width=Math.max(1,Math.round(this.size.x*.6)),height=Math.max(1,Math.round(this.size.y*.6));if(this.depth.width!==width||this.depth.height!==height)this.depth.setSize(width,height);
     this.material.uniforms.uResolution.value.copy(this.size);this.material.uniforms.uNear.value=camera.near;this.material.uniforms.uFar.value=camera.far;
     this.material.uniforms.uSoft.value=this.enabled?1:0;if(!this.enabled)return;
