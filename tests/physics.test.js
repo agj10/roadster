@@ -1,0 +1,15 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {makeWorld,VehicleSimulation,addBox,addCurvePhysics,ZONES} from '../src/physics.js';
+const dt=1/120;
+function settled(){const world=makeWorld(),sim=new VehicleSimulation(world);for(let i=0;i<240;i++)sim.step(dt);return {world,sim};}
+function run(sim,seconds,input={}){for(let i=0;i<seconds/dt;i++)sim.step(dt,input);}
+test('suspension supports the stationary car without sinking or gaining energy',()=>{const {sim}=settled();assert.ok(sim.body.position.y>.45&&sim.body.position.y<.9,`height ${sim.body.position.y}`);assert.equal(sim.grounded,4);assert.ok(sim.speed<.2);});
+test('all-wheel drive accelerates forward; braking removes momentum',()=>{const {sim}=settled();run(sim,2,{forward:true});assert.ok(sim.body.position.z>ZONES[0].position[2]+5);assert.ok(sim.speed>15);const before=sim.speed;run(sim,1,{back:true});assert.ok(sim.speed<before*.6);});
+test('thrust is finite; an empty tank cannot keep applying lift',()=>{const {sim}=settled();const start=sim.body.position.y;run(sim,1,{lift:true});assert.ok(sim.body.position.y>start+4);assert.ok(sim.gas<.85);run(sim,5,{lift:true});assert.equal(sim.gas,0);const vy=sim.body.velocity.y;run(sim,.5,{lift:true});assert.ok(sim.body.velocity.y<vy-4);});
+test('reset restores pose, velocity, fuel and measurement state',()=>{const {sim}=settled();run(sim,1,{forward:true,boost:true});sim.reset(2);assert.deepEqual(sim.body.position.toArray(),ZONES[2].position);assert.equal(sim.body.velocity.length(),0);assert.equal(sim.gas,1);assert.equal(sim.runTime,null);});
+test('solid barriers stop the chassis instead of allowing it to pass through',()=>{const {world,sim}=settled();addBox(world,[10,5,2],[0,2.5,-15]);run(sim,3,{forward:true});assert.ok(sim.body.position.z<-17,`barrier crossing: ${sim.body.position.z}`);});
+test('boost improves acceleration and uses compressed gas',()=>{const a=settled().sim,b=settled().sim;run(a,1,{forward:true});run(b,1,{forward:true,boost:true});assert.ok(b.speed>a.speed*1.5);assert.ok(b.gas<1);});
+test('roll controls produce actual angular momentum in flight',()=>{const {sim}=settled();run(sim,.6,{lift:true});run(sim,.3,{rollLeft:true});assert.ok(Math.abs(sim.body.angularVelocity.z)>.2);});
+test('infinite experiment mode still works after normal tank depletion',()=>{const {sim}=settled();sim.gas=0;sim.infinite=true;run(sim,.5,{lift:true});assert.ok(sim.body.velocity.y>3);});
+test('ramp collision geometry is traversable and fan holds an inverted vehicle',()=>{const world=makeWorld();addCurvePhysics(world,{x:-65,z:75,radius:25,angle:Math.PI,width:14,segments:180});const sim=new VehicleSimulation(world);sim.reset(1);let maxHeight=0,inverted=false;for(let i=0;i<1800;i++){sim.step(dt,{forward:true});maxHeight=Math.max(maxHeight,sim.body.position.y);if(sim.body.quaternion.w*sim.body.quaternion.w+sim.body.quaternion.y*sim.body.quaternion.y<.2&&sim.grounded>1)inverted=true;}assert.ok(maxHeight>45,`reached only ${maxHeight}`);assert.ok(inverted,'never drove upside down');});
