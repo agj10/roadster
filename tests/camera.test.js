@@ -1,0 +1,10 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as THREE from 'three';
+import {DrivingCamera,dampScalar,shortestAngle} from '../src/camera.js';
+import {makeWorld,addBox} from '../src/physics.js';
+test('critical damping has the same response at 30 and 120 Hz',()=>{function integrate(dt){let x=20,v=0;for(let i=0;i<1/dt;i++)[x,v]=dampScalar(x,0,v,8,dt);return x;}assert.ok(Math.abs(integrate(1/30)-integrate(1/120))<1e-10);});
+test('yaw wrap takes the short path across minus/plus pi',()=>{assert.ok(Math.abs(shortestAngle(Math.PI-.1,-Math.PI+.1)-.2)<1e-10);});
+test('camera retracts before geometry and extends smoothly after it clears',()=>{const world=makeWorld(),wall=addBox(world,[8,8,1],[0,4,-5]),camera=new THREE.PerspectiveCamera(67,1,.18,4000),rig=new DrivingCamera(camera,world),pose={position:new THREE.Vector3(0,1,0),quaternion:new THREE.Quaternion()};rig.reset(pose.position);rig.yaw=rig.smoothedYaw=0;rig.update(1/60,pose,{snap:true});assert.ok(rig.obstructed);assert.ok(camera.position.z>-4.5);const compressed=rig.armLength;world.removeBody(wall);rig.update(1/60,pose);assert.ok(rig.armLength>compressed);assert.ok(rig.armLength<rig.zoom);});
+test('inverted car keeps the orbit camera world-up and does not flip azimuth',()=>{const camera=new THREE.PerspectiveCamera(67,1,.18,4000),rig=new DrivingCamera(camera,makeWorld()),pose={position:new THREE.Vector3(0,40,0),quaternion:new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1,0,0),Math.PI)};rig.yaw=.8;for(let i=0;i<120;i++)rig.update(1/60,pose,{grounded:true,moving:true});assert.equal(rig.yaw,.8);assert.equal(camera.up.y,1);assert.ok(camera.position.toArray().every(Number.isFinite));});
+test('free orbit retains the chosen heading while the car turns',()=>{const camera=new THREE.PerspectiveCamera(),rig=new DrivingCamera(camera,makeWorld());rig.mode=2;rig.yaw=1.1;const pose={position:new THREE.Vector3(0,1,0),quaternion:new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0),2)};for(let i=0;i<400;i++)rig.update(1/60,pose,{grounded:true,moving:true});assert.equal(rig.yaw,1.1);});

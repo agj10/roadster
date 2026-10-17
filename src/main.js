@@ -1,116 +1,120 @@
 import * as THREE from 'three';
-import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
-import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
-import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { makeWorld,VehicleSimulation,ZONES } from './physics.js';
-import { createCar } from './vehicle.js';
-import { buildEnvironment } from './environment.js';
-import {Vec3,RaycastResult} from 'cannon-es';
+import {EffectComposer} from 'three/addons/postprocessing/EffectComposer.js';
+import {RenderPass} from 'three/addons/postprocessing/RenderPass.js';
+import {UnrealBloomPass} from 'three/addons/postprocessing/UnrealBloomPass.js';
+import {OutputPass} from 'three/addons/postprocessing/OutputPass.js';
 import {HDRLoader} from 'three/addons/loaders/HDRLoader.js';
+import {makeWorld,VehicleSimulation,ZONES} from './physics.js';
+import {createCar} from './vehicle.js';
+import {buildEnvironment} from './environment.js';
+import {DrivingCamera} from './camera.js';
+import {ColdGas} from './gas.js';
+import {VEHICLE} from './vehicle-config.js';
 
-const $=s=>document.querySelector(s),keys=new Set();
-let renderer,composer,camera,scene,sim,car,environment,started=false,paused=false,cameraMode=0,quality='high',soundOn=false;
-let toastTimer,orbitYaw=.65,orbitPitch=.18,dragging=false,lastX=0,lastY=0,lastFrame=performance.now(),accumulator=0,frameCount=0,fpsTime=0,renderTime=0,hudTime=0;
-const lookAt=new THREE.Vector3(),cameraGoal=new THREE.Vector3(),target=new THREE.Vector3(),heading=new THREE.Vector3(0,0,1),worldUp=new THREE.Vector3(0,1,0);
-const cameraRay=new RaycastResult(),rayFrom=new Vec3(),rayTo=new Vec3();
-function toast(t){$('#toast').textContent=t;$('#toast').classList.add('visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('#toast').classList.remove('visible'),4800);}
-window.addEventListener('error',e=>{if(!renderer){$('#error').hidden=false;$('#error').textContent='3D 화면을 시작하지 못했어요. 최신 Chrome 또는 Edge에서 하드웨어 가속을 켜고 다시 열어주세요. '+e.message;}});
-init().catch(e=>{$('#loading').style.display='none';$('#error').hidden=false;$('#error').textContent='3D 초기화 오류: '+e.message;console.error(e);});
-async function init(){
-  renderer=new THREE.WebGLRenderer({canvas:$('#scene'),antialias:true,powerPreference:'high-performance'});renderer.setPixelRatio(Math.min(devicePixelRatio,1.75));renderer.setSize(innerWidth,innerHeight);renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=.75;renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;renderer.info.autoReset=false;
-  scene=new THREE.Scene();camera=new THREE.PerspectiveCamera(51,innerWidth/innerHeight,.25,4000);
-  const loader=new THREE.TextureLoader();const [diffuse,normal,hdr]=await Promise.all([loader.loadAsync('/textures/asphalt-diffuse.jpg'),loader.loadAsync('/textures/asphalt-normal.jpg'),new HDRLoader().loadAsync('/textures/sky.hdr')]);
-  const world=makeWorld();sim=new VehicleSimulation(world);environment=buildEnvironment(scene,world,{diffuse,normal});car=createCar();scene.add(car.root);car.wheels.forEach(w=>scene.add(w));
-  const pmrem=new THREE.PMREMGenerator(renderer);hdr.mapping=THREE.EquirectangularReflectionMapping;const envMap=pmrem.fromEquirectangular(hdr);pmrem.dispose();scene.environment=envMap.texture;scene.background=hdr;environment.sky.visible=false;
-  function updateEnvironment(){const night=$('#time').value==='night';scene.environmentIntensity=night?.13:.6;scene.backgroundIntensity=night?.07:.8;}
-  updateEnvironment();
-  const renderTarget=new THREE.WebGLRenderTarget(innerWidth,innerHeight,{type:THREE.HalfFloatType});renderTarget.samples=4;
-  composer=new EffectComposer(renderer,renderTarget);composer.addPass(new RenderPass(scene,camera));const bloom=new UnrealBloomPass(new THREE.Vector2(innerWidth,innerHeight),.12,.4,1.9);composer.addPass(bloom);composer.addPass(new OutputPass());
-  // Tire marks: one shared dynamic buffer, bounded memory, no unbounded mesh creation.
-  const marks=new THREE.BufferGeometry(),markData=new Float32Array(9000*6);marks.setAttribute('position',new THREE.BufferAttribute(markData,3).setUsage(THREE.DynamicDrawUsage));marks.setDrawRange(0,0);const skid=new THREE.LineSegments(marks,new THREE.LineBasicMaterial({color:0x1b1e1e,transparent:true,opacity:.35}));scene.add(skid);let markIndex=0,lastMark=null;
-  // Cold-gas mist is pooled and emitted from the actual chassis position.
-  const particleCount=320,particleData=new Float32Array(particleCount*3),particles=[];
-  for(let i=0;i<particleCount;i++){particleData[i*3+1]=-100;particles.push({life:0,velocity:new THREE.Vector3()});}
-  const mistGeometry=new THREE.BufferGeometry();mistGeometry.setAttribute('position',new THREE.BufferAttribute(particleData,3));
-  const mistTexture=(()=>{const c=document.createElement('canvas');c.width=c.height=64;const ct=c.getContext('2d'),g=ct.createRadialGradient(32,32,0,32,32,32);g.addColorStop(0,'rgba(235,248,255,.5)');g.addColorStop(1,'rgba(235,248,255,0)');ct.fillStyle=g;ct.fillRect(0,0,64,64);return new THREE.CanvasTexture(c);})();
-  const mist=new THREE.Points(mistGeometry,new THREE.PointsMaterial({color:0xe1e9e8,size:1.5,map:mistTexture,transparent:true,opacity:.5,depthWrite:false}));mist.frustumCulled=false;scene.add(mist);let particleCursor=0;
-  // Soft world-space contact shadow adds grounding without faking airborne contact.
-  const shadowCanvas=document.createElement('canvas');shadowCanvas.width=shadowCanvas.height=128;const sctx=shadowCanvas.getContext('2d'),grad=sctx.createRadialGradient(64,64,5,64,64,64);grad.addColorStop(0,'rgba(0,0,0,.6)');grad.addColorStop(1,'rgba(0,0,0,0)');sctx.fillStyle=grad;sctx.fillRect(0,0,128,128);
-  const contactShadow=new THREE.Mesh(new THREE.PlaneGeometry(5,7),new THREE.MeshBasicMaterial({map:new THREE.CanvasTexture(shadowCanvas),transparent:true,depthWrite:false}));contactShadow.rotation.x=-Math.PI/2;scene.add(contactShadow);
-  const headlamps=[];for(const x of [-.65,.65]){const light=new THREE.SpotLight(0xd4e9ff,0,90,.35,.6,1.5);light.position.set(x,.25,2.2);light.target.position.set(x,-.8,25);car.root.add(light,light.target);headlamps.push(light);}
-  setZone(0,false);for(let i=0;i<120;i++)sim.step(1/120,{});updateCar();updateCamera(1,true);
-  $('#loading').style.opacity='0';setTimeout(()=>$('#loading').remove(),750);
-  requestAnimationFrame(frame);
-  function frame(now){
-    requestAnimationFrame(frame);const dt=Math.min((now-lastFrame)/1000,.06);lastFrame=now;renderTime+=dt;
-    const active=started&&!paused&&!document.querySelector('dialog[open]');
-    if(active){accumulator+=dt;const input=readInput();while(accumulator>=1/120){sim.step(1/120,input);accumulator-=1/120;}updateMarks(input);}else accumulator=0;
-    updateCar();updateCamera(dt);updateMist(dt,active);audio.update(sim,active);
-    const pos=car.root.position,dir=scene.userData.sunDirection;environment.sun.position.copy(pos).addScaledVector(dir,250);environment.sun.target.position.copy(pos);environment.sun.target.updateMatrixWorld();
-    contactShadow.position.set(pos.x,.082,pos.z);contactShadow.material.opacity=Math.max(0,.85-sim.altitude*.055);contactShadow.rotation.z=-new THREE.Euler().setFromQuaternion(car.root.quaternion,'YXZ').y;
-    renderer.info.reset();composer.render();frameCount++;fpsTime+=dt;hudTime+=dt;if(hudTime>.08){updateHUD();hudTime=0;}if(fpsTime>1){$('#fps').textContent=`${Math.round(frameCount/fpsTime)} FPS`;frameCount=0;fpsTime=0;}
-  }
-  function updateCar(){
-    car.root.position.copy(sim.body.position);car.root.quaternion.copy(sim.body.quaternion);
-    for(let i=0;i<4;i++){sim.vehicle.updateWheelTransform(i);const t=sim.vehicle.wheelInfos[i].worldTransform;car.wheels[i].position.copy(t.position);car.wheels[i].quaternion.copy(t.quaternion);}
-    car.jets.forEach((j,i)=>{j.visible=started&&!paused&&((sim.jet===2&&i<4)||(sim.jet===1&&i>=4&&i<6)||(sim.jet===3&&i>=6));j.scale.setScalar(.75+Math.random()*.35);});
-  }
-  function updateCamera(dt,snap=false){
-    const pos=car.root.position,quat=car.root.quaternion;target.copy(pos).add(new THREE.Vector3(0,.35,0).applyQuaternion(quat));
-    const forward=new THREE.Vector3(0,0,1).applyQuaternion(quat);if(Math.abs(forward.y)<.9){heading.set(forward.x,0,forward.z).normalize();}
-    const yaw=Math.atan2(heading.x,heading.z),a=yaw+orbitYaw;
-    if(cameraMode===1){cameraGoal.copy(pos).add(new THREE.Vector3(0,.7,1.5).applyQuaternion(quat));lookAt.copy(pos).addScaledVector(forward,25).add(new THREE.Vector3(0,.7,0));camera.up.copy(worldUp);camera.position.lerp(cameraGoal,snap?1:1-Math.exp(-dt*18));camera.lookAt(lookAt);}
-    else{
-      const distance=cameraMode===2?20:started?9+Math.min(sim.speed*.035,2.5):9.3;
-      cameraGoal.set(target.x+Math.sin(a)*distance,target.y+(cameraMode===2?8:1.8)+orbitPitch*4,target.z-Math.cos(a)*distance);
-      cameraGoal.y=Math.max(.65,cameraGoal.y);rayFrom.set(target.x,target.y,target.z);rayTo.set(cameraGoal.x,cameraGoal.y,cameraGoal.z);cameraRay.reset();
-      if(sim.world.raycastClosest(rayFrom,rayTo,{collisionFilterMask:1,skipBackfaces:false},cameraRay)){const direction=cameraGoal.clone().sub(target).normalize();cameraGoal.copy(target).addScaledVector(direction,Math.max(.6,cameraRay.distance-.4));}
-      camera.position.lerp(cameraGoal,snap?1:1-Math.exp(-dt*(cameraMode===2?5:6)));lookAt.lerp(target,snap?1:1-Math.exp(-dt*8));camera.up.copy(worldUp);camera.lookAt(lookAt);
-    }
-    const desired=51+Math.min(sim.speed*.12,11);camera.fov+=(desired-camera.fov)*Math.min(1,dt*3);camera.updateProjectionMatrix();
-  }
-  function updateMarks(input){
-    if(sim.grounded>=2&&(input.handbrake||Math.abs(sim.steer)>.15&&sim.speed>17)){
-      const p=new THREE.Vector3().copy(sim.body.position);p.y=.085;
-      if(lastMark&&p.distanceTo(lastMark)<5&&p.y<.2&&sim.altitude<.6){for(const side of [-1,1]){const offset=new THREE.Vector3(side*.83,0,0).applyQuaternion(car.root.quaternion);const a=lastMark.clone().add(offset),b=p.clone().add(offset);markData.set([a.x,a.y,a.z,b.x,b.y,b.z],markIndex*6);markIndex=(markIndex+1)%9000;}marks.attributes.position.needsUpdate=true;marks.setDrawRange(0,Math.min(18000,marks.drawRange.count+4));}lastMark=p;
-    }else lastMark=null;
-  }
-  function updateMist(dt,active){
-    if(active&&sim.jet){for(let n=0;n<4;n++){const i=particleCursor++%particleCount,p=particles[i],direction=sim.jet===2?new THREE.Vector3(0,-1,0):new THREE.Vector3(0,0,-1);direction.applyQuaternion(car.root.quaternion);const origin=car.root.position.clone().addScaledVector(direction,1);particleData.set([origin.x+(Math.random()-.5),origin.y,origin.z],i*3);p.velocity.copy(direction).multiplyScalar(8).add(new THREE.Vector3(sim.body.velocity.x*.4,sim.body.velocity.y*.4,sim.body.velocity.z*.4));p.life=.8;}}
-    for(let i=0;i<particleCount;i++){const p=particles[i];if(p.life>0){p.life-=dt;particleData[i*3]+=p.velocity.x*dt;particleData[i*3+1]+=p.velocity.y*dt;particleData[i*3+2]+=p.velocity.z*dt;if(p.life<=0)particleData[i*3+1]=-100;}}mistGeometry.attributes.position.needsUpdate=true;
-  }
-  $('#time').addEventListener('change',e=>{environment.setTime(e.target.value);updateEnvironment();headlamps.forEach(l=>l.intensity=e.target.value==='night'?180:0);});
-  $('#quality').addEventListener('change',e=>{quality=e.target.value;renderer.setPixelRatio(Math.min(devicePixelRatio,quality==='high'?1.75:quality==='medium'?1.1:.75));renderer.shadowMap.enabled=quality!=='low';bloom.enabled=quality==='high';resize();});
-  function resize(){renderer.setSize(innerWidth,innerHeight);composer.setPixelRatio(renderer.getPixelRatio());composer.setSize(innerWidth,innerHeight);camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();}window.addEventListener('resize',resize);
-  // Explicit diagnostics for reproducible QA, no controls or mutation exposed in production.
-  window.roadsterDiagnostics=()=>({position:[...sim.body.position.toArray()],speed:sim.speed,gas:sim.gas,grounded:sim.grounded,zone:sim.zone,started,paused,drawCalls:renderer.info.render.calls,triangles:renderer.info.render.triangles});
+const $=s=>document.querySelector(s),keys=new Set(),fixedStep=1/120;
+let renderer,composer,camera,scene,sim,car,environment,rig,gas,started=false,paused=false,soundOn=false,ready=false;
+let accumulator=0,lastFrame=performance.now(),toastTimer,controlsTimer,previous,current,statsTime=0;
+const axisY=new THREE.Vector3(0,1,0),axisAxle=new THREE.Vector3(-1,0,0);
+function toast(text){$('#toast').textContent=text;$('#toast').classList.add('visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('#toast').classList.remove('visible'),3300);}
+function snapshot(){return {position:new THREE.Vector3().copy(sim.body.position),quaternion:new THREE.Quaternion().copy(sim.body.quaternion),wheels:sim.vehicle.wheelInfos.map(w=>({length:w.suspensionLength,rotation:w.rotation,steer:w.steering}))};}
+function resetSnapshots(){current=snapshot();previous=snapshot();accumulator=0;}
+function start(){if(!ready)return;started=true;paused=false;$('#start').textContent='일시정지';$('#scene').focus({preventScroll:true});audio.init();clearTimeout(controlsTimer);controlsTimer=setTimeout(()=>document.body.classList.add('driving'),7000);}
+function pause(){if(!started){start();return;}paused=!paused;keys.clear();$('#start').textContent=paused?'계속 주행':'일시정지';if(paused)document.body.classList.remove('driving');else document.body.classList.add('driving');}
+function selectZone(index,notify=true){
+  if(!sim)return;sim.reset(index);for(let i=0;i<110;i++)sim.step(fixedStep,{});
+  resetSnapshots();rig.reset(sim.body.position,ZONES[index].yaw);document.querySelectorAll('[data-zone]').forEach(button=>button.classList.toggle('active',Number(button.dataset.zone)===index));$('#zone-title').textContent=ZONES[index].title;
+  if(notify)toast(ZONES[index].tip);
+}
+function renderVehicle(alpha){
+  car.root.position.lerpVectors(previous.position,current.position,alpha);car.root.quaternion.slerpQuaternions(previous.quaternion,current.quaternion,alpha);
+  sim.vehicle.wheelInfos.forEach((info,i)=>{
+    const a=previous.wheels[i],b=current.wheels[i],length=THREE.MathUtils.lerp(a.length,b.length,alpha),rotation=THREE.MathUtils.lerp(a.rotation,b.rotation,alpha),steering=THREE.MathUtils.lerp(a.steer,b.steer,alpha);
+    const local=new THREE.Vector3(info.chassisConnectionPointLocal.x,-length,info.chassisConnectionPointLocal.z);
+    const wheel=car.wheels[i];wheel.position.copy(local).applyQuaternion(car.root.quaternion).add(car.root.position);
+    const steeringQuaternion=new THREE.Quaternion().setFromAxisAngle(axisY,steering),spin=new THREE.Quaternion().setFromAxisAngle(axisAxle,rotation);
+    wheel.quaternion.copy(car.root.quaternion).multiply(steeringQuaternion).multiply(spin);
+    car.calipers[i].position.copy(wheel.position);car.calipers[i].quaternion.copy(car.root.quaternion).multiply(steeringQuaternion);
+  });
 }
 function readInput(){return {forward:keys.has('KeyW')||keys.has('ArrowUp'),back:keys.has('KeyS')||keys.has('ArrowDown'),left:keys.has('KeyA')||keys.has('ArrowLeft'),right:keys.has('KeyD')||keys.has('ArrowRight'),boost:keys.has('ShiftLeft')||keys.has('ShiftRight'),lift:keys.has('Space'),rollLeft:keys.has('KeyQ'),rollRight:keys.has('KeyE'),pitchUp:keys.has('KeyI'),pitchDown:keys.has('KeyK'),handbrake:keys.has('KeyB')};}
-function setZone(index,notify=true){sim.reset(index);document.querySelectorAll('[data-zone]').forEach(b=>b.classList.toggle('active',Number(b.dataset.zone)===index));$('#zone-title').innerHTML=`${ZONES[index].name}<small>흡착 ${sim.fan?'ON':'OFF'} · 추진기 대기</small>`;$('#world-label small').textContent=`TEST COMPLEX / 0${index+1}`;if(notify)toast(ZONES[index].tip);orbitYaw=.45;orbitPitch=.14;}
-function updateHUD(){
-  const speed=sim.body.velocity.length()*3.6;$('#speed').textContent=String(Math.round(speed)).padStart(3,'0');$('#speed-bar').style.width=`${Math.min(100,speed/3.8)}%`;$('#gear').textContent=speed<1?'P':sim.body.velocity.dot(sim.body.quaternion.vmult({x:0,y:0,z:1}))<-.5?'R':'D';$('#altitude').textContent=sim.altitude.toFixed(1);$('#gforce').textContent=sim.gForce.toFixed(1);$('#contact').textContent=sim.grounded?'GROUNDED':'AIRBORNE';$('#contact').style.color=sim.grounded?'#cddcc3':'#ff9c76';$('#fan-status').textContent=sim.fan?'ACTIVE':'OFF';$('#fan-status').style.color=sim.fan?'#cddcc3':'#ff9c76';$('#gas').textContent=sim.infinite?'∞':Math.round(sim.gas*100);$('#gas-bar').style.width=`${sim.infinite?100:sim.gas*100}%`;$('#accel').textContent=sim.runTime!==null?`${sim.runTime.toFixed(2)} s`:sim.runStart!==null?`${(sim.elapsed-sim.runStart).toFixed(2)} s`:'—.— s';
+function hud(){
+  const forward=new THREE.Vector3(0,0,1).applyQuaternion(car.root.quaternion),velocity=new THREE.Vector3().copy(sim.body.velocity),signed=forward.dot(velocity),speed=velocity.length()*3.6;
+  $('#speed').textContent=Math.round(speed);$('#gear').textContent=speed<.9?'P':signed<-.5?'R':'D';
+  $('#fan-status').textContent=sim.fan?'흡착 ON':'흡착 OFF';$('#fan-status').classList.toggle('off',!sim.fan);
+  $('#assist-status').textContent=sim.stabilize?'자세 보조 ON':'자세 보조 OFF';$('#assist-status').classList.toggle('off',!sim.stabilize);
+  $('#flight-status').hidden=sim.grounded>0||sim.altitude<.9;$('#altitude').textContent=sim.altitude.toFixed(1);
 }
-function start(){started=true;paused=false;document.body.classList.add('driving');$('#start').innerHTML='일시정지 <span>Ⅱ</span>';orbitYaw=0;toast(ZONES[sim.zone].tip);audio.init();}
-function togglePause(){if(!started){start();return;}paused=!paused;keys.clear();$('#start').innerHTML=paused?'계속 주행 <span>↗</span>':'일시정지 <span>Ⅱ</span>';document.body.classList.toggle('driving',!paused);toast(paused?'일시정지 · Esc로 계속 주행':'주행을 계속해요.');}
-function openDialog(id){keys.clear();$(id).showModal();}document.querySelectorAll('dialog .close').forEach(b=>b.addEventListener('click',()=>b.closest('dialog').close()));
-$('#help').onclick=()=>openDialog('#help-dialog');$('#settings').onclick=()=>openDialog('#settings-dialog');$('.close-help').onclick=()=>{$('#help-dialog').close();start();};$('#start').onclick=togglePause;
-document.querySelectorAll('[data-zone]').forEach(b=>b.onclick=()=>setZone(Number(b.dataset.zone)));
-$('#suction').oninput=e=>{sim.suction=Number(e.target.value);$('#suction-value').textContent=`${sim.suction.toFixed(1)} × 중량`;};$('#thrust').oninput=e=>{sim.lift=Number(e.target.value);$('#thrust-value').textContent=`${sim.lift.toFixed(1)} × 중량`;};$('#infinite').onchange=e=>sim.infinite=e.target.checked;
-window.addEventListener('keydown',e=>{
-  if(!sim)return;
-  if(document.querySelector('dialog[open]'))return;if(['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Tab'].includes(e.code)&&e.code!=='Tab')e.preventDefault();if(e.repeat)return;keys.add(e.code);
-  if(e.code==='Escape')togglePause();if(e.code==='KeyH')openDialog('#help-dialog');if(e.code==='KeyM')toggleSound();
-  if(/^Digit[1-5]$/.test(e.code))setZone(Number(e.code.slice(-1))-1);
-  if(e.code==='KeyR'){setZone(sim.zone);toast('시작 위치 복귀 · 가스 충전 완료');}
-  if(e.code==='KeyC'){cameraMode=(cameraMode+1)%3;toast(['추적 카메라','범퍼 카메라','오비트 카메라'][cameraMode]);}
-  if(e.code==='KeyF'){sim.fan=!sim.fan;toast(`흡착 팬 ${sim.fan?'ON':'OFF'}`);}
-  if(e.code==='KeyT'){sim.stabilize=!sim.stabilize;toast(`공중 자세 안정화 ${sim.stabilize?'ON':'OFF'}`);}
-  if(!started&&['KeyW','ArrowUp'].includes(e.code))start();
-});window.addEventListener('keyup',e=>keys.delete(e.code));
-window.addEventListener('blur',()=>{keys.clear();if(started&&!paused)togglePause();});document.addEventListener('visibilitychange',()=>{if(document.hidden){keys.clear();if(started&&!paused)togglePause();}});
-$('#scene').addEventListener('pointerdown',e=>{dragging=true;lastX=e.clientX;lastY=e.clientY;$('#scene').setPointerCapture(e.pointerId);});$('#scene').addEventListener('pointermove',e=>{if(dragging){orbitYaw-=(e.clientX-lastX)*.006;orbitPitch=THREE.MathUtils.clamp(orbitPitch+(e.clientY-lastY)*.005,-.25,1.2);lastX=e.clientX;lastY=e.clientY;}});$('#scene').addEventListener('pointerup',()=>dragging=false);$('#scene').addEventListener('pointercancel',()=>dragging=false);
-document.querySelectorAll('[data-key]').forEach(b=>{b.addEventListener('pointerdown',e=>{e.preventDefault();b.setPointerCapture(e.pointerId);if(!started)start();keys.add(b.dataset.key);});for(const type of ['pointerup','pointercancel','lostpointercapture'])b.addEventListener(type,()=>keys.delete(b.dataset.key));});
+async function init(){
+  renderer=new THREE.WebGLRenderer({canvas:$('#scene'),antialias:true,powerPreference:'high-performance'});
+  renderer.setPixelRatio(Math.min(devicePixelRatio,1.6));renderer.setSize(innerWidth,innerHeight);renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=.83;renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;renderer.info.autoReset=false;
+  scene=new THREE.Scene();camera=new THREE.PerspectiveCamera(67,innerWidth/innerHeight,.18,4000);camera.layers.enable(1);
+  const loader=new THREE.TextureLoader(),[diffuse,normal,hdr]=await Promise.all([loader.loadAsync('/textures/asphalt-diffuse.jpg'),loader.loadAsync('/textures/asphalt-normal.jpg'),new HDRLoader().loadAsync('/textures/sky.hdr')]);
+  const world=makeWorld();sim=new VehicleSimulation(world);environment=buildEnvironment(scene,world,{diffuse,normal});car=createCar();scene.add(car.root,...car.wheels,...car.calipers);rig=new DrivingCamera(camera,world);rig.bind($('#scene'));gas=new ColdGas(scene,world);
+  const pmrem=new THREE.PMREMGenerator(renderer);hdr.mapping=THREE.EquirectangularReflectionMapping;const envMap=pmrem.fromEquirectangular(hdr);pmrem.dispose();scene.environment=envMap.texture;scene.background=hdr;scene.environmentIntensity=.75;scene.backgroundIntensity=.8;environment.sky.visible=false;
+  const target=new THREE.WebGLRenderTarget(innerWidth,innerHeight,{type:THREE.HalfFloatType});target.samples=4;composer=new EffectComposer(renderer,target);composer.addPass(new RenderPass(scene,camera));const bloom=new UnrealBloomPass(new THREE.Vector2(innerWidth,innerHeight),.09,.35,2.1);composer.addPass(bloom);composer.addPass(new OutputPass());
+  const lights=[];for(const x of [-.65,.65]){const light=new THREE.SpotLight(0xd8ebff,0,85,.38,.7,1.5);light.position.set(x,.15,2.34);light.target.position.set(x,-.9,27);car.root.add(light,light.target);lights.push(light);}
+  // Small, bounded skidmark pool; marks use real wheel contact points.
+  const markGeometry=new THREE.BufferGeometry(),markBuffer=new Float32Array(6000*6);markGeometry.setAttribute('position',new THREE.BufferAttribute(markBuffer,3).setUsage(THREE.DynamicDrawUsage));markGeometry.setDrawRange(0,0);const marks=new THREE.LineSegments(markGeometry,new THREE.LineBasicMaterial({color:0x171a1b,transparent:true,opacity:.4}));marks.frustumCulled=false;scene.add(marks);let markIndex=0,markCount=0,lastContact=[null,null];
+  function skidmarks(input){for(let i=2;i<4;i++){const wheel=sim.vehicle.wheelInfos[i],index=i-2;if(wheel.isInContact&&(input.handbrake||wheel.skidInfo<.7&&sim.speed>13)){const p=new THREE.Vector3().copy(wheel.raycastResult.hitPointWorld).addScaledVector(new THREE.Vector3().copy(wheel.raycastResult.hitNormalWorld),.012),last=lastContact[index];if(last&&last.distanceTo(p)<3){markBuffer.set([last.x,last.y,last.z,p.x,p.y,p.z],markIndex*6);markIndex=(markIndex+1)%6000;markCount=Math.min(6000,markCount+1);markGeometry.setDrawRange(0,markCount*2);markGeometry.attributes.position.needsUpdate=true;}lastContact[index]=p;}else lastContact[index]=null;}}
+  selectZone(0,false);renderVehicle(1);rig.update(1,car.root,{snap:true,grounded:true});ready=true;
+  $('#loading').style.opacity='0';setTimeout(()=>$('#loading').remove(),550);lastFrame=performance.now();
+  function frame(now){
+    requestAnimationFrame(frame);const dt=Math.min((now-lastFrame)/1000,.05);lastFrame=now;
+    const active=started&&!paused&&!document.querySelector('dialog[open]'),input=readInput();
+    if(active){accumulator+=dt;while(accumulator>=fixedStep){previous=current;sim.step(fixedStep,input);current=snapshot();accumulator-=fixedStep;}skidmarks(input);}else{accumulator=0;previous=current;}
+    renderVehicle(active?accumulator/fixedStep:1);rig.update(dt,car.root,{moving:active&&sim.speed>2,grounded:sim.grounded>1,speed:sim.speed,velocity:sim.body.velocity});gas.update(dt,sim,car.root,camera,active);audio.update(sim,active);
+    environment.sun.position.copy(car.root.position).addScaledVector(scene.userData.sunDirection,250);environment.sun.target.position.copy(car.root.position);environment.sun.target.updateMatrixWorld();
+    renderer.info.reset();gas.renderDepth(renderer,scene,camera);composer.render();statsTime+=dt;if(statsTime>.1){hud();statsTime=0;}
+  }
+  requestAnimationFrame(frame);
+  function resize(){renderer.setSize(innerWidth,innerHeight);composer.setPixelRatio(renderer.getPixelRatio());composer.setSize(innerWidth,innerHeight);camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();}
+  window.addEventListener('resize',resize);
+  $('#quality').addEventListener('change',event=>{const q=event.target.value;renderer.setPixelRatio(Math.min(devicePixelRatio,q==='high'?1.6:q==='medium'?1:.75));renderer.shadowMap.enabled=q!=='low';bloom.enabled=q==='high';gas.enabled=q!=='low';resize();});
+  $('#time').addEventListener('change',event=>{const night=event.target.value==='night';environment.setTime(event.target.value);scene.environmentIntensity=night?.18:.75;scene.backgroundIntensity=night?.07:.8;lights.forEach(light=>light.intensity=night?180:0);gas.material.uniforms.uTint.value.setRGB(night?.55:.94,night?.64:.96,night?.75:.98);});
+  window.roadsterDiagnostics=()=>({
+    position:sim.body.position.toArray(),speed:sim.body.velocity.length(),grounded:sim.vehicle.wheelInfos.filter(w=>w.isInContact).length,zone:sim.zone,zoneCount:ZONES.length,started,paused,gas:sim.gas,infinite:sim.infinite,steer:sim.steer,
+    camera:rig.diagnostics(),particleCount:gas.aliveCount||0,drawCalls:renderer.info.render.calls,triangles:renderer.info.render.triangles,
+    wheels:car.wheels.map((w,i)=>({position:w.position.toArray(),radius:VEHICLE.wheelRadius,inContact:sim.vehicle.wheelInfos[i].isInContact})),
+  });
+}
+init().catch(error=>{console.error(error);$('#loading').style.display='none';$('#error').hidden=false;$('#error').textContent='3D 화면을 시작하지 못했어요. Chrome 또는 Edge의 하드웨어 가속을 확인해 주세요. '+error.message;});
+
+function openDialog(id){if(!ready)return;keys.clear();rig.cancelDrag();$(id).showModal();}
+document.querySelectorAll('dialog .close').forEach(button=>button.addEventListener('click',()=>button.closest('dialog').close()));
+$('#locations').onclick=()=>openDialog('#locations-dialog');$('#help').onclick=()=>openDialog('#help-dialog');$('#settings').onclick=()=>openDialog('#settings-dialog');$('#start').onclick=()=>{pause();$('#scene').focus({preventScroll:true});};
+document.querySelectorAll('[data-zone]').forEach(button=>button.onclick=()=>{selectZone(Number(button.dataset.zone));$('#locations-dialog').close();$('#scene').focus({preventScroll:true});});
+$('#suction').oninput=event=>{sim.suction=Number(event.target.value);$('#suction-value').textContent=sim.suction.toFixed(1)+' × 중량';};
+$('#thrust').oninput=event=>{sim.lift=Number(event.target.value);$('#thrust-value').textContent=sim.lift.toFixed(1)+' × 중량';};
+$('#sensitivity').oninput=event=>{rig.sensitivity=Number(event.target.value);$('#sensitivity-value').textContent=rig.sensitivity.toFixed(1);};
+$('#follow').onchange=event=>rig.follow=event.target.checked;$('#assist').onchange=event=>sim.stabilize=event.target.checked;
+$('#fullscreen').onclick=async()=>{try{if(document.fullscreenElement)await document.exitFullscreen();else await document.documentElement.requestFullscreen();}catch{toast('이 브라우저 창에서는 전체 화면을 사용할 수 없어요.');}};
+$('#scene').addEventListener('dblclick',()=>{if(ready){rig.recenter();toast('카메라를 차량 뒤로 정렬해요.');}});
+window.addEventListener('keydown',event=>{
+  if(!ready||document.querySelector('dialog[open]'))return;
+  if(['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Tab','End'].includes(event.code))event.preventDefault();
+  if(event.repeat)return;keys.add(event.code);
+  if(event.code==='Escape')pause();if(event.code==='KeyH')openDialog('#help-dialog');if(event.code==='Tab')openDialog('#locations-dialog');
+  if(event.code==='KeyU')document.body.classList.toggle('ui-hidden');
+  if(event.code==='KeyM')toggleSound();
+  if(/^Digit[1-9]$/.test(event.code))selectZone(Number(event.code.slice(-1))-1);
+  if(event.code==='KeyR'){selectZone(sim.zone,false);toast('시작 위치로 돌아왔어요.');}
+  if(event.code==='KeyC'){rig.mode=(rig.mode+1)%3;rig.idle=0;toast(['추적 시점 · 휠로 거리 조절','범퍼 시점','자유 궤도 · 자동 정렬 없음'][rig.mode]);}
+  if(event.code==='End')rig.recenter();
+  if(event.code==='KeyF'){sim.fan=!sim.fan;toast('흡착 '+(sim.fan?'ON':'OFF'));}
+  if(event.code==='KeyT'){sim.stabilize=!sim.stabilize;$('#assist').checked=sim.stabilize;toast('공중 자세 보조 '+(sim.stabilize?'ON':'OFF'));}
+  if(!started&&['KeyW','ArrowUp','Space'].includes(event.code))start();
+});
+window.addEventListener('keyup',event=>keys.delete(event.code));
+function clearInput(){keys.clear();rig?.cancelDrag();if(started&&!paused)pause();}
+window.addEventListener('blur',clearInput);document.addEventListener('visibilitychange',()=>{if(document.hidden)clearInput();});
+document.querySelectorAll('[data-key]').forEach(button=>{
+  button.addEventListener('pointerdown',event=>{event.preventDefault();if(!ready)return;button.setPointerCapture(event.pointerId);if(!started)start();keys.add(button.dataset.key);});
+  for(const type of ['pointerup','pointercancel','lostpointercapture'])button.addEventListener(type,()=>keys.delete(button.dataset.key));
+});
 let audioContext,osc,gain,wind,windGain;
-const audio={init(){if(audioContext||!soundOn)return;audioContext=new AudioContext();osc=audioContext.createOscillator();gain=audioContext.createGain();osc.type='sine';gain.gain.value=0;osc.connect(gain).connect(audioContext.destination);osc.start();const buffer=audioContext.createBuffer(1,audioContext.sampleRate*2,audioContext.sampleRate),d=buffer.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;wind=audioContext.createBufferSource();wind.buffer=buffer;wind.loop=true;const filter=audioContext.createBiquadFilter();filter.type='lowpass';filter.frequency.value=650;windGain=audioContext.createGain();windGain.gain.value=0;wind.connect(filter).connect(windGain).connect(audioContext.destination);wind.start();},update(s,active){if(!audioContext)return;const t=audioContext.currentTime,on=soundOn&&active;osc.frequency.setTargetAtTime(90+s.speed*6,t,.12);gain.gain.setTargetAtTime(on?.013+Math.min(s.speed*.0003,.035):0,t,.1);windGain.gain.setTargetAtTime(on?Math.min(s.speed*.0008,.1)+(s.jet?.09:0):0,t,.1);}};
-function toggleSound(){soundOn=!soundOn;audio.init();if(audioContext?.state==='suspended')audioContext.resume();$('#sound').textContent=soundOn?'SOUND ON':'SOUND OFF';}$('#sound').onclick=toggleSound;
+const audio={
+  init(){if(audioContext||!soundOn)return;audioContext=new AudioContext();osc=audioContext.createOscillator();gain=audioContext.createGain();osc.type='sine';gain.gain.value=0;osc.connect(gain).connect(audioContext.destination);osc.start();const buffer=audioContext.createBuffer(1,audioContext.sampleRate*2,audioContext.sampleRate),data=buffer.getChannelData(0);for(let i=0;i<data.length;i++)data[i]=Math.random()*2-1;wind=audioContext.createBufferSource();wind.buffer=buffer;wind.loop=true;const filter=audioContext.createBiquadFilter();filter.type='lowpass';filter.frequency.value=900;windGain=audioContext.createGain();windGain.gain.value=0;wind.connect(filter).connect(windGain).connect(audioContext.destination);wind.start();},
+  update(s,active){if(!audioContext)return;const t=audioContext.currentTime,on=soundOn&&active;osc.frequency.setTargetAtTime(85+s.speed*5,t,.1);gain.gain.setTargetAtTime(on?.008+Math.min(s.speed*.0002,.025):0,t,.1);windGain.gain.setTargetAtTime(on?Math.min(s.speed*.0007,.09)+(s.jet?.075:0):0,t,.1);}
+};
+function toggleSound(){soundOn=!soundOn;audio.init();if(audioContext?.state==='suspended')audioContext.resume();$('#sound').checked=soundOn;}
+$('#sound').onchange=toggleSound;

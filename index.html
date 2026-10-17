@@ -1,21 +1,76 @@
 <!doctype html>
-<html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#15191a"><link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23172025'/%3E%3Ctext x='12' y='46' font-family='Arial' font-size='42' font-style='italic' fill='%23ff6b35'%3ER%3C/text%3E%3C/svg%3E"><title>ROADSTER / Proving Ground</title><link rel="stylesheet" href="/src/style.css"></head>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#141b20">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23141b20'/%3E%3Ctext x='12' y='46' font-family='Arial' font-size='42' font-style='italic' fill='%23ff7545'%3ER%3C/text%3E%3C/svg%3E">
+  <title>Roadster · Proving Ground</title><link rel="stylesheet" href="/src/style.css">
+</head>
 <body>
-<canvas id="scene" aria-label="로드스터 3D 주행 시뮬레이션"></canvas>
-<div id="loading"><span class="logo">R /</span><p>PROVING GROUND</p><small>시험장을 준비하고 있어요</small></div>
-<header><a class="brand" href="#"><b>R<span>/</span></b><div>ROADSTER<small>EXPERIMENTAL PROVING GROUND</small></div></a><div class="top-right"><span class="live-dot"></span><span>LOCAL SESSION</span><button id="sound" title="소리 켜기">SOUND OFF</button><button id="help">안내 <kbd>H</kbd></button><button id="settings">설정</button></div></header>
-<aside id="locations"><p class="eyebrow">SELECT TEST SITE</p><h1>한계를 시험하다<span>.</span></h1><p class="intro">노면을 벗어나는 드라이빙.</p><nav aria-label="시험 구역 선택">
-<button data-zone="0" class="active"><span>01</span><div>자유 주행<small>OPEN PAD / 자유롭게 탐색</small></div><i>↗</i></button>
-<button data-zone="1"><span>02</span><div>인버티드 램프<small>THE RAMP / 흡착 · 공중 회전</small></div><i>↗</i></button>
-<button data-zone="2"><span>03</span><div>킥플립 점프<small>THE JUMP / 장애물 비행</small></div><i>↗</i></button>
-<button data-zone="3"><span>04</span><div>버티컬 루프<small>THE LOOP / 360° 수직 회전</small></div><i>↗</i></button>
-<button data-zone="4"><span>05</span><div>가속 시험로<small>THE STRAIGHT / 0–96.6 km/h</small></div><i>↗</i></button>
-</nav><div class="location-foot"><span>34° 52′ N &nbsp; 117° 53′ W</span><small>가상 사막 시험장 · 실제 장소 재현 아님</small></div></aside>
-<div id="world-label"><span class="cross">+</span><span>MOJAVE<br><small>TEST COMPLEX / 01</small></span></div>
-<div id="toast" role="status"></div>
-<section id="telemetry"><div class="telemetry-top"><span class="live-dot"></span><span>VEHICLE TELEMETRY</span><span id="fps">60 FPS</span></div><div class="car-name">ROADSTER <span>ROCKET / STUDY</span></div><div class="speed-row"><strong id="speed">000</strong><div><span>KM/H</span><b id="gear">P</b></div></div><div class="speed-track"><i id="speed-bar"></i></div><div class="metrics"><div><small>높이</small><b><span id="altitude">0.0</span> <em>m</em></b></div><div><small>하중</small><b><span id="gforce">1.0</span> <em>G</em></b></div><div><small>상태</small><b id="contact">GROUNDED</b></div></div><div class="system-row"><span>SUCTION SYSTEM</span><b id="fan-status">ACTIVE</b></div><div class="system-row"><span>COLD GAS</span><span><b id="gas">100</b> %</span></div><div class="gas-track"><i id="gas-bar"></i></div><div class="run"><span>0—96.6 KM/H</span><b id="accel">—.— s</b></div><div class="telemetry-note">공개 시연 기반의 실험 모델 · 물리 수치 추정</div></section>
-<div id="bottom"><div class="status"><span class="live-dot"></span><div id="zone-title">OPEN PAD<small>흡착 ON · 추진기 대기</small></div></div><div class="key-hints"><span><kbd>W A S D</kbd> 주행</span><span><kbd>SHIFT</kbd> 부스트</span><span><kbd>SPACE</kbd> 상승</span><span><kbd>Q E</kbd> 롤</span><span><kbd>C</kbd> 시점</span><span><kbd>R</kbd> 복귀</span></div><button id="start">주행 시작 <span>↗</span></button></div>
-<div id="mobile"><button data-key="KeyW">↑</button><button data-key="KeyA">←</button><button data-key="KeyS">↓</button><button data-key="KeyD">→</button><button data-key="Space">상승</button><button data-key="ShiftLeft">BOOST</button></div>
-<dialog id="help-dialog"><button class="close" aria-label="닫기">×</button><p class="eyebrow">DRIVER BRIEFING</p><h2>지상에서, 공중까지.</h2><p>먼저 구역을 고르고 <b>주행 시작</b>을 누르세요. 차량은 직접 조종하며, 스턴트를 자동으로 재생하지 않아요.</p><div class="help-grid"><p><kbd>W / ↑</kbd> 가속 <kbd>S / ↓</kbd> 제동 · 후진</p><p><kbd>A D / ← →</kbd> 조향 <kbd>B</kbd> 핸드브레이크</p><p><kbd>Shift</kbd> 전진 추진 <kbd>Space</kbd> 차체 위쪽 추진</p><p><kbd>Q E</kbd> 공중 롤 <kbd>I K</kbd> 공중 피치</p><p><kbd>F</kbd> 흡착 팬 <kbd>T</kbd> 공중 자세 안정화</p><p><kbd>C</kbd> 추적 / 범퍼 / 오비트 <kbd>드래그</kbd> 시점 회전</p><p><kbd>R</kbd> 구역 시작점 · 가스 충전 <kbd>1–5</kbd> 구역 이동</p><p><kbd>Esc</kbd> 일시정지 <kbd>H</kbd> 안내 <kbd>M</kbd> 소리</p></div><h3>인버티드 램프</h3><p>흡착 팬을 켜고 80–110 km/h로 정면 진입하세요. 천장 끝에서 떨어지면 Q/E로 자세를 돌려 바퀴로 착지하세요. 안정화 T를 켜면 수평 자세 복귀를 도와줘요.</p><h3>재현 범위</h3><p>2026년 공개 시연의 흡착 주행과 짧은 공중 기동을 참고했어요. 차량 형상은 절차적으로 제작한 근사 모델이고, 질량·추력·타이어·공기역학은 추정치예요. 실차 검증용 시뮬레이터가 아니며, 실사 수준의 스캔 자산은 포함하지 않아요.</p><a href="https://www.tesla.com/roadster" target="_blank" rel="noreferrer">Tesla 공식 자료 ↗</a><button class="primary close-help">확인 · 주행하기 ↗</button></dialog>
-<dialog id="settings-dialog"><button class="close" aria-label="닫기">×</button><p class="eyebrow">SIMULATION SETUP</p><h2>나만의 테스트 조건.</h2><label>그래픽<select id="quality"><option value="high">높음 · 반사 / 그림자 / 블룸</option><option value="medium">보통 · 낮은 해상도</option><option value="low">낮음 · 그림자 끄기</option></select></label><label>시간대<select id="time"><option value="sunset">골든 아워</option><option value="day">한낮</option><option value="night">야간 테스트</option></select></label><label>흡착력 <span id="suction-value">2.0 × 중량</span><input id="suction" type="range" min="0" max="3" step="0.1" value="2"></label><label>상승 추력 <span id="thrust-value">2.8 × 중량</span><input id="thrust" type="range" min="1" max="5" step="0.1" value="2.8"></label><label class="check"><input id="infinite" type="checkbox"> 무한 가스 · 자유 실험 모드</label><p>슬라이더 값은 실차 측정값이 아닌 실험용 가정이에요. 가스는 R로 구역에 복귀하면 충전돼요.</p></dialog>
-<div id="error" hidden></div><script type="module" src="/src/main.js"></script></body></html>
+  <canvas id="scene" tabindex="0" aria-label="로드스터 시험장. WASD로 주행, 마우스 드래그로 회전, 휠로 확대와 축소"></canvas>
+  <div id="loading"><b>R<span>/</span></b><p>시험장을 준비하고 있어요</p></div>
+  <header class="hud">
+    <div class="header-left"><span class="wordmark">R<span>/</span></span><button id="locations" title="시험장 선택 (Tab)"><span id="zone-title">자유 주행</span><span class="chevron">⌄</span></button></div>
+    <div class="header-actions">
+      <button id="fullscreen" class="icon-button" title="전체 화면" aria-label="전체 화면">⛶</button>
+      <button id="help" class="icon-button" title="조작법 (H)" aria-label="조작법">?</button>
+      <button id="settings" class="icon-button" title="설정" aria-label="설정">⚙</button>
+      <button id="start">주행 시작</button>
+    </div>
+  </header>
+  <div id="toast" role="status"></div>
+  <div id="flight-status" class="hud" hidden><span id="contact">공중</span><b><span id="altitude">0.0</span> m</b></div>
+  <div id="controls" class="hud"><span><kbd>WASD</kbd> 주행</span><span><kbd>우클릭 드래그</kbd> 카메라</span><span><kbd>휠</kbd> 확대·축소</span><span><kbd>H</kbd> 조작법</span></div>
+  <section id="telemetry" class="hud" aria-label="차량 상태">
+    <div class="speed"><b id="gear">P</b><strong id="speed">0</strong><small>km/h</small></div>
+    <div class="vehicle-status"><span id="fan-status">흡착 ON</span><span id="assist-status">자세 보조 ON</span></div>
+  </section>
+  <div id="mobile" class="hud"><button data-key="KeyA">←</button><button data-key="KeyD">→</button><button data-key="KeyS">제동</button><button data-key="KeyW">가속</button><button data-key="Space">상승</button><button data-key="ShiftLeft">BOOST</button></div>
+
+  <dialog id="locations-dialog">
+    <button class="close" aria-label="닫기">×</button><h2>시험장 선택</h2><p>숫자 1–9로도 이동할 수 있어요.</p>
+    <nav class="site-grid" aria-label="시험장">
+      <button data-zone="0" class="active"><span>1</span><div>자유 주행<small>넓은 패드 · 슬라럼</small></div></button>
+      <button data-zone="1"><span>2</span><div>인버티드 반원<small>시연형 반쪽 루프 · 높이 50 m</small></div></button>
+      <button data-zone="2"><span>3</span><div>킥플립 점프<small>이륙 · 장애물 · 착지</small></div></button>
+      <button data-zone="3"><span>4</span><div>컴팩트 반원<small>작은 반쪽 루프 · 공중 복귀</small></div></button>
+      <button data-zone="4"><span>5</span><div>가속 시험로<small>700 m 직선</small></div></button>
+      <button data-zone="5"><span>6</span><div>뱅크 코너<small>기울어진 180° 코너</small></div></button>
+      <button data-zone="6"><span>7</span><div>연속 요철<small>물결 노면 · 서스펜션</small></div></button>
+      <button data-zone="7"><span>8</span><div>갭 점프<small>두 가지 거리의 연속 점프</small></div></button>
+      <button data-zone="8"><span>9</span><div>핸들링 코스<small>지그재그 · 제동 연습</small></div></button>
+    </nav>
+  </dialog>
+  <dialog id="help-dialog">
+    <button class="close" aria-label="닫기">×</button><h2>조작법</h2>
+    <div class="help-grid">
+      <span>가속 · 제동 후 후진</span><b>W S / ↑ ↓</b>
+      <span>좌우 조향</span><b>A D / ← →</b>
+      <span>핸드브레이크</span><b>B</b>
+      <span>부스트 · 상승</span><b>Shift + W / Space</b>
+      <span>공중 롤 · 피치</span><b>Q E / I K</b>
+      <span>흡착 · 자세 보조</span><b>F / T</b>
+      <span>카메라 회전</span><b>좌·우클릭 드래그</b>
+      <span>카메라 확대 · 축소</span><b>마우스 휠 / 두 손가락</b>
+      <span>추적 · 범퍼 · 자유 궤도</span><b>C</b>
+      <span>카메라 뒤로 정렬</span><b>End / 더블클릭</b>
+      <span>복귀 · 시험장 선택</span><b>R / 1–9 / Tab</b>
+      <span>일시정지 · UI 숨김 · 소리</span><b>Esc / U / M</b>
+    </div>
+    <p>가스는 무제한이에요. 카메라를 돌리는 동안에는 차량 방향과 독립적으로 회전하고, 추적 시점에서는 주행 중 잠시 뒤 부드럽게 뒤쪽으로 돌아와요. 자유 궤도 시점에서는 자동으로 돌아오지 않아요.</p>
+    <p>반원 지형은 80–110 km/h로 진입해 보세요. 도로가 거꾸로 끝나는 지점에서 이탈한 뒤 Q/E로 회전하고 Space로 낙하를 조절할 수 있어요.</p>
+    <details><summary>재현 범위와 출처</summary><p>공개 시연을 참고한 비공식 근사 모델이에요. 실차 CAD나 계측 물리는 아니에요. 구체적인 가정과 자료는 프로젝트의 docs/research.md에 정리했어요.</p><a href="https://www.tesla.com/roadster" target="_blank" rel="noreferrer">Tesla 공식 자료 ↗</a></details>
+  </dialog>
+  <dialog id="settings-dialog">
+    <button class="close" aria-label="닫기">×</button><h2>설정</h2>
+    <label>그래픽<select id="quality"><option value="high">높음</option><option value="medium">보통</option><option value="low">낮음</option></select></label>
+    <label>시간대<select id="time"><option value="sunset">늦은 오후</option><option value="day">한낮</option><option value="night">야간</option></select></label>
+    <label>카메라 감도 <span id="sensitivity-value">1.0</span><input id="sensitivity" type="range" min="0.3" max="2" step="0.1" value="1"></label>
+    <label class="check"><input id="follow" type="checkbox" checked> 주행 중 카메라 자동 정렬</label>
+    <label class="check"><input id="assist" type="checkbox" checked> 공중 자세 보조</label>
+    <label class="check"><input id="sound" type="checkbox"> 차량 소리</label>
+    <details><summary>실험용 물리 설정</summary><label>흡착력 <span id="suction-value">2.0 × 중량</span><input id="suction" type="range" min="0" max="3" step="0.1" value="2"></label><label>상승 추력 <span id="thrust-value">2.8 × 중량</span><input id="thrust" type="range" min="1" max="5" step="0.1" value="2.8"></label><p>실차 측정값이 아닌 실험용 가정이에요.</p></details>
+  </dialog>
+  <div id="error" hidden></div><script type="module" src="/src/main.js"></script>
+</body>
+</html>

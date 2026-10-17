@@ -1,77 +1,98 @@
 import * as THREE from 'three';
 import {batchStatic} from './batch.js';
-const chrome=new THREE.MeshStandardMaterial({color:0xaab2b3,metalness:.95,roughness:.22});
-const rubber=new THREE.MeshStandardMaterial({color:0x151819,roughness:.94});
-const carbon=new THREE.MeshStandardMaterial({color:0x141a1d,metalness:.45,roughness:.46});
-const glass=new THREE.MeshPhysicalMaterial({color:0x142731,metalness:.35,roughness:.09,clearcoat:1,clearcoatRoughness:.05});
-const white=new THREE.MeshPhysicalMaterial({color:0xcdd3d0,metalness:.72,roughness:.27,clearcoat:1,clearcoatRoughness:.15});
-const red=new THREE.MeshStandardMaterial({color:0xfb3223,emissive:0xff1808,emissiveIntensity:2});
-const led=new THREE.MeshStandardMaterial({color:0xffffff,emissive:0xd4f4ff,emissiveIntensity:2});
-function mesh(geometry,material,parent,p=[0,0,0]){const m=new THREE.Mesh(geometry,material);m.position.set(...p);m.castShadow=true;m.receiveShadow=true;parent.add(m);return m;}
-function box(parent,size,p,mat=carbon){return mesh(new THREE.BoxGeometry(...size),mat,parent,p);}
-// Cross-section loft, +Z forward. Designed from visual proportions, not manufacturer CAD.
-function loft(parent,sections,mat){
-  const vertices=[],indices=[];
-  for(const [z,w,y,h] of sections){for(const [x,yy] of [[-w*.83,y],[-w,y+.08],[-w*.98,h-.05],[-w*.7,h],[w*.7,h],[w*.98,h-.05],[w,y+.08],[w*.83,y]])vertices.push(x,yy,z);}
-  for(let j=0;j<sections.length-1;j++)for(let k=0;k<8;k++){const a=j*8+k,b=j*8+(k+1)%8,c=b+8,d=a+8;indices.push(a,b,d,b,c,d);}
-  for(let k=1;k<7;k++){indices.push(0,k+1,k);const n=(sections.length-1)*8;indices.push(n,n+k,n+k+1);}
-  const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(vertices,3));g.setIndex(indices);g.computeVertexNormals();const m=mesh(g,mat,parent);m.material.side=THREE.DoubleSide;return m;
+import {VEHICLE,NOZZLES} from './vehicle-config.js';
+
+const paint=new THREE.MeshPhysicalMaterial({color:0xe3e6e2,metalness:.38,roughness:.24,clearcoat:1,clearcoatRoughness:.12});
+const carbon=new THREE.MeshStandardMaterial({color:0x12171b,roughness:.43,metalness:.36});
+const seam=new THREE.MeshStandardMaterial({color:0x1b2327,roughness:.7});
+const alloy=new THREE.MeshStandardMaterial({color:0x9aa5a9,roughness:.25,metalness:.94});
+const rotorMaterial=new THREE.MeshStandardMaterial({color:0x667078,roughness:.58,metalness:.85});
+const glass=new THREE.MeshPhysicalMaterial({color:0x0a1821,metalness:.12,roughness:.08,clearcoat:1,clearcoatRoughness:.06});
+const headlight=new THREE.MeshStandardMaterial({color:0xd8eeff,emissive:0xc1e4ff,emissiveIntensity:2.4});
+const taillight=new THREE.MeshStandardMaterial({color:0xa60807,emissive:0xff1609,emissiveIntensity:1.7});
+const redCaliper=new THREE.MeshStandardMaterial({color:0xbc3021,roughness:.4,metalness:.55});
+const profile=[[-2.325,.83,.24],[-2.05,1.005,.43],[-1.39,1.025,.475],[-.72,.957,.425],[0,.948,.39],[.76,.985,.36],[1.39,1.025,.405],[1.98,.94,.255],[2.325,.79,.14]];
+const times=new Float32Array(profile.map(p=>p[0]));
+const widthAt=new THREE.CubicInterpolant(times,new Float32Array(profile.map(p=>p[1])),1);
+const deckAt=new THREE.CubicInterpolant(times,new Float32Array(profile.map(p=>p[2])),1);
+const width=z=>widthAt.evaluate(z)[0],deck=z=>deckAt.evaluate(z)[0];
+function mesh(parent,geometry,material,position=[0,0,0]){const m=new THREE.Mesh(geometry,material);m.position.set(...position);m.castShadow=m.receiveShadow=true;parent.add(m);return m;}
+function box(parent,size,position,material=carbon){return mesh(parent,new THREE.BoxGeometry(...size),material,position);}
+function tube(parent,points,radius,material=seam){return mesh(parent,new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points.map(p=>new THREE.Vector3(...p))),Math.max(16,points.length*8),radius,6,false),material);}
+function patch(parent,nu,nv,fn,material,reverse=false){
+  const vertices=[],uv=[],indices=[];
+  for(let i=0;i<=nu;i++)for(let j=0;j<=nv;j++){vertices.push(...fn(i/nu,j/nv));uv.push(i/nu,j/nv);}
+  for(let i=0;i<nu;i++)for(let j=0;j<nv;j++){const a=i*(nv+1)+j,b=a+nv+1;indices.push(...(reverse?[a,a+1,b,a+1,b+1,b]:[a,b,a+1,a+1,b,b+1]));}
+  const geometry=new THREE.BufferGeometry();geometry.setAttribute('position',new THREE.Float32BufferAttribute(vertices,3));geometry.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));geometry.setIndex(indices);geometry.computeVertexNormals();return mesh(parent,geometry,material);
 }
+function archBottom(z){let result=-.23;for(const axle of [-VEHICLE.wheelbase/2,VEHICLE.wheelbase/2]){const dz=z-axle;if(Math.abs(dz)<.435)result=Math.max(result,VEHICLE.archCenterY+Math.sqrt(.435**2-dz**2));}return result;}
+function sideX(z,y){const bottom=archBottom(z),v=THREE.MathUtils.clamp((y-bottom)/(deck(z)-bottom),0,1);return width(z)*(THREE.MathUtils.lerp(bottom>-.2?1:.945,.945,v)+.04*Math.sin(v*Math.PI));}
+function tireMaterial(){
+  const c=document.createElement('canvas');c.width=512;c.height=128;const ctx=c.getContext('2d');ctx.fillStyle='#9b9b9b';ctx.fillRect(0,0,512,128);ctx.strokeStyle='#383838';ctx.lineWidth=3;
+  for(const y of [28,45,83,100]){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(512,y);ctx.stroke();}
+  ctx.lineWidth=2;for(let x=-20;x<530;x+=18){for(const y of [18,51,86]){ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x+10,y+23);ctx.stroke();}}
+  const bump=new THREE.CanvasTexture(c);bump.wrapS=bump.wrapT=THREE.RepeatWrapping;bump.repeat.set(4,1);bump.anisotropy=8;
+  return new THREE.MeshStandardMaterial({color:0x17191a,roughness:.94,bumpMap:bump,bumpScale:.004});
+}
+function createWheel(side){
+  const wheel=new THREE.Group(),radius=VEHICLE.wheelRadius;
+  const cross=[new THREE.Vector2(.265,-.13),new THREE.Vector2(.3,-.15),new THREE.Vector2(.339,-.138),new THREE.Vector2(radius,-.105),new THREE.Vector2(radius,.105),new THREE.Vector2(.339,.138),new THREE.Vector2(.3,.15),new THREE.Vector2(.265,.13)];
+  const tire=mesh(wheel,new THREE.LatheGeometry(cross,64),tireMaterial());tire.rotation.z=Math.PI/2;
+  const inside=mesh(wheel,new THREE.CylinderGeometry(.267,.267,.25,48,1,true),carbon);inside.rotation.z=Math.PI/2;
+  const rotor=mesh(wheel,new THREE.CylinderGeometry(.232,.232,.016,64),rotorMaterial,[side*.112,0,0]);rotor.rotation.z=Math.PI/2;
+  for(let k=0;k<32;k++){const a=k*Math.PI/16;for(const r of [.172,.209]){const hole=mesh(wheel,new THREE.CircleGeometry(.006,5),seam,[side*.122,Math.cos(a)*r,Math.sin(a)*r]);hole.rotation.y=side*Math.PI/2;}}
+  const rim=mesh(wheel,new THREE.TorusGeometry(.267,.012,8,64),alloy,[side*.148,0,0]);rim.rotation.y=Math.PI/2;
+  const innerLip=mesh(wheel,new THREE.TorusGeometry(.25,.007,6,64),carbon,[side*.151,0,0]);innerLip.rotation.y=Math.PI/2;
+  for(let i=0;i<5;i++)for(const fork of [-1,1]){const a=i*Math.PI/2.5,points=[];for(let j=0;j<=5;j++){const t=j/5,r=.054+.205*t,angle=a+.19*t+fork*.065*t;points.push([side*(.16+.012*Math.sin(t*Math.PI)),Math.cos(angle)*r,Math.sin(angle)*r]);}tube(wheel,points,.012,alloy);}
+  const hub=mesh(wheel,new THREE.CylinderGeometry(.053,.053,.024,24),carbon,[side*.165,0,0]);hub.rotation.z=Math.PI/2;
+  for(let i=0;i<5;i++){const a=i*Math.PI/2.5,bolt=mesh(wheel,new THREE.CylinderGeometry(.006,.006,.006,6),alloy,[side*.18,Math.cos(a)*.034,Math.sin(a)*.034]);bolt.rotation.z=Math.PI/2;}
+  batchStatic(wheel);
+  const caliper=new THREE.Group();const c=box(caliper,[.06,.145,.065],[side*.126,.13,-.13],redCaliper);c.rotation.x=.3;
+  return {wheel,caliper};
+}
+
 export function createCar(){
-  const root=new THREE.Group(),wheels=[],jets=[];const shell=new THREE.Group();root.add(shell);
-  loft(shell,[[-2.25,.8,-.13,.27],[-2.12,.98,-.2,.49],[-1.6,1.025,-.2,.63],[-.9,.96,-.2,.59],[.3,.93,-.2,.45],[1.35,1.02,-.18,.48],[1.98,.94,-.12,.27],[2.25,.79,-.06,.17]],white);
-  loft(shell,[[-1.05,.76,.47,.51],[-.55,.73,.46,.82],[.17,.68,.43,.85],[1.02,.76,.38,.44]],glass);
-  // Roof rails and thin rear buttresses preserve the low, angular canopy silhouette.
-  for(const s of [-1,1]){
-    const rail=box(shell,[.055,.045,.82],[s*.69,.83,-.18],white);rail.rotation.y=s*.04;
-    const sill=box(shell,[.07,.13,2.6],[s*.95,-.12,-.02],carbon);
-    const shoulder=box(shell,[.09,.035,1.2],[s*.81,.66,-1.2],white);shoulder.rotation.x=-.19;
-    box(shell,[.06,.1,.55],[s*.97,.21,-.3],carbon);
-    box(shell,[.035,.025,.23],[s*.963,.43,-.45],chrome);
-    const mirror=box(shell,[.21,.08,.3],[s*1.11,.62,.6],carbon);mirror.rotation.y=-s*.15;
-    // Dark wheel arches overlaid on the body, segmented to follow each tire.
-    for(const z of [-1.39,1.39]){
-      const arch=mesh(new THREE.TorusGeometry(.414,.028,8,32,Math.PI),carbon,shell,[s*1.01,-.08,z]);arch.rotation.set(0,Math.PI/2,0);
+  const root=new THREE.Group(),shell=new THREE.Group();root.add(shell);
+  // Curved body panels have true wheel openings in the shared chassis coordinates.
+  patch(shell,180,28,(u,v)=>{const z=-2.325+u*4.65,t=v*2-1,w=width(z)*.945,hoodDish=.065*Math.exp(-(((z-1.15)/.85)**2));return [t*w,deck(z)+.025*(1-t*t)-hoodDish*(1-t*t),z];},paint);
+  for(const side of [-1,1]){
+    patch(shell,240,10,(u,v)=>{const z=-2.325+u*4.65,bottom=archBottom(z),y=THREE.MathUtils.lerp(bottom,deck(z),v);return [side*sideX(z,y),y,z];},paint,side>0);
+    for(const axle of [-1.39,1.39]){
+      const points=[];for(let i=0;i<=40;i++){const a=Math.PI*i/40,z=axle+Math.cos(a)*.435;points.push([side*(width(z)+.001),VEHICLE.archCenterY+Math.sin(a)*.435,z]);}tube(shell,points,.008,paint);
+      patch(shell,48,4,(u,v)=>{const a=Math.PI*u,z=axle+Math.cos(a)*.429;return [side*(width(z)-v*.18),VEHICLE.archCenterY+Math.sin(a)*.429,z];},carbon,side<0);
     }
+    box(shell,[.055,.065,1.72],[side*.924,-.205,0],carbon);
+    const door=[[-.62,.39],[-.69,.15],[-.65,-.13],[.56,-.13],[.71,.21],[.66,.36]].map(([z,y])=>[side*(sideX(z,y)+.002),y,z]);tube(shell,door,.0035,seam);
+    box(shell,[.015,.018,.135],[side*(sideX(-.35,.345)+.005),.345,-.35],carbon);
+    const intake=box(shell,[.019,.085,.26],[side*(sideX(-.78,.045)+.001),.045,-.78],carbon);intake.rotation.x=-.18;
+    tube(shell,[[side*.56,.47,.53],[side*.96,.46,.57],[side*1.08,.47,.57]],.018,carbon);
+    const mirror=mesh(shell,new THREE.SphereGeometry(1,18,10),paint,[side*1.115,.48,.57]);mirror.scale.set(.12,.043,.105);
   }
-  box(shell,[1.69,.025,.07],[0,.28,2.17],led);
-  box(shell,[1.62,.035,.06],[0,.29,-2.28],red);
-  box(shell,[1.87,.06,.18],[0,-.13,2.12],carbon);
-  box(shell,[1.72,.29,.12],[0,-.045,-2.25],carbon);
-  for(let i=-3;i<=3;i++)box(shell,[.035,.2,.43],[i*.23,-.13,-2.1],carbon);
-  box(shell,[1.76,.065,.24],[0,.69,-1.96],carbon);
-  for(const s of [-1,1])box(shell,[.045,.22,.08],[s*.69,.58,-1.96],carbon);
-  // Turbine outlets on the rear deck.
-  for(const s of [-1,1]){
-    const fan=mesh(new THREE.CylinderGeometry(.23,.23,.025,32),carbon,shell,[s*.47,.61,-1.38]);
-    for(let i=0;i<10;i++){const a=i*Math.PI/5,blade=box(shell,[.032,.015,.31],[s*.47+Math.sin(a)*.08,.629,-1.38+Math.cos(a)*.08],chrome);blade.rotation.y=a+.35;}
+  for(const end of [-1,1])patch(shell,16,6,(u,v)=>{const bottom=end>0?-.2:-.21,y=THREE.MathUtils.lerp(bottom,deck(end*2.325),v),x=(u*2-1)*sideX(end*2.325,y);return [x,y,end*2.325];},paint,end<0);
+  box(shell,[1.69,.045,.2],[0,-.2,2.25],carbon);
+  box(shell,[1.44,.055,.018],[0,-.08,2.339],carbon);
+  tube(shell,[[-.76,.132,2.333],[-.35,.135,2.338],[.35,.135,2.338],[.76,.132,2.333]],.009,headlight);
+  box(shell,[1.7,.16,.075],[0,-.135,-2.34],carbon);
+  for(let i=-3;i<=3;i++){const fin=box(shell,[.015,.105,.31],[i*.225,-.185,-2.22],carbon);fin.rotation.x=-.08;}
+  tube(shell,[[-.805,.216,-2.334],[-.4,.22,-2.343],[.4,.22,-2.343],[.805,.216,-2.334]],.009,taillight);
+  function canopy(u,v){const z=-.99+u*1.92,t=Math.PI*v,w=.665-.065*Math.sin(u*Math.PI),base=deck(z)+.006,h=.37*Math.sin(Math.PI*u)**.72;return [Math.cos(t)*w,base+Math.sin(t)*h,z];}
+  patch(shell,54,32,canopy,glass,true);
+  for(const side of [0,1]){const p=[];for(let i=0;i<=28;i++)p.push(canopy(i/28,side===0?.12:.88));tube(shell,p,.017,paint);}
+  for(const u of [.14,.67]){const p=[];for(let i=0;i<=24;i++)p.push(canopy(u,.12+i/24*.76));tube(shell,p,.011,carbon);}
+  for(const side of [-1,1]){
+    const x=side*.39,z=-1.45,y=deck(z)+.007;
+    mesh(shell,new THREE.CylinderGeometry(.158,.158,.014,40),carbon,[x,y,z]);
+    for(let i=0;i<9;i++){const a=i*Math.PI/4.5,blade=box(shell,[.017,.007,.11],[x+Math.sin(a)*.075,y+.011,z+Math.cos(a)*.075],rotorMaterial);blade.rotation.y=a+.3;}
+    const ring=mesh(shell,new THREE.TorusGeometry(.161,.009,6,40),alloy,[x,y+.009,z]);ring.rotation.x=Math.PI/2;
+    const strut=box(shell,[.027,.16,.075],[side*.62,deck(-1.98)+.08,-1.98],carbon);strut.rotation.x=-.12;
   }
-  const emblem=box(shell,[.17,.006,.035],[0,.38,1.78],chrome);emblem.rotation.x=.1;
-  box(shell,[.025,.008,.11],[0,.37,1.73],chrome);
-  // License plaque with compact custom lettering.
-  const canvas=document.createElement('canvas');canvas.width=512;canvas.height=128;const ctx=canvas.getContext('2d');ctx.fillStyle='#141c21';ctx.fillRect(0,0,512,128);ctx.fillStyle='#e0e8e3';ctx.font='500 48px sans-serif';ctx.textAlign='center';ctx.fillText('R O A D S T E R',256,81);const plaque=new THREE.MeshBasicMaterial({map:new THREE.CanvasTexture(canvas)});
-  const plate=mesh(new THREE.PlaneGeometry(.61,.12),plaque,shell,[0,.02,-2.32]);plate.rotation.y=Math.PI;
-  for(let i=0;i<4;i++){
-    const wheel=new THREE.Group();
-    const tire=mesh(new THREE.CylinderGeometry(.355,.355,.275,40),rubber,wheel);tire.rotation.z=Math.PI/2;
-    for(const side of [-1,1]){
-      const rim=mesh(new THREE.CylinderGeometry(.276,.276,.012,40),carbon,wheel,[side*.145,0,0]);rim.rotation.z=Math.PI/2;
-      const brake=mesh(new THREE.CylinderGeometry(.226,.226,.018,40),chrome,wheel,[side*.15,0,0]);brake.rotation.z=Math.PI/2;
-      const lip=mesh(new THREE.TorusGeometry(.273,.013,8,40),chrome,wheel,[side*.16,0,0]);lip.rotation.y=Math.PI/2;
-      for(let k=0;k<10;k++){const a=k*Math.PI/5,spoke=box(wheel,[.027,.042,.24],[side*.175,Math.sin(a)*.135,Math.cos(a)*.135],carbon);spoke.rotation.x=-a+.17;}
-      const hub=mesh(new THREE.CylinderGeometry(.055,.055,.022,16),chrome,wheel,[side*.185,0,0]);hub.rotation.z=Math.PI/2;
-      box(wheel,[.025,.13,.065],[side*.16,.13,.11],new THREE.MeshStandardMaterial({color:0xd9422d,metalness:.4,roughness:.45}));
-      for(let k=0;k<40;k++){const a=k*Math.PI/20;const tread=box(wheel,[.25,.006,.009],[0,Math.sin(a)*.355,Math.cos(a)*.355],carbon);tread.rotation.x=-a;}
-    }
-    wheels.push(wheel);
-  }
-  const nozzlePos=[[.65,-.2,-1.3],[-.65,-.2,-1.3],[.65,-.2,1.25],[-.65,-.2,1.25],[.67,.17,-2.18],[-.67,.17,-2.18],[1,.15,.8],[-1,.15,.8],[1,.15,-1],[-1,.15,-1]];
-  nozzlePos.forEach((p,i)=>{
-    const group=new THREE.Group();group.position.set(...p);if(i<4)group.rotation.x=Math.PI;else if(i<6)group.rotation.x=-Math.PI/2;else group.rotation.z=(p[0]>0?-1:1)*Math.PI/2;
-    mesh(new THREE.CylinderGeometry(.07,.095,.085,16),chrome,group);mesh(new THREE.CylinderGeometry(.052,.06,.09,12),carbon,group);
-    const plume=mesh(new THREE.ConeGeometry(.17,1.1,12,1,true),new THREE.MeshBasicMaterial({color:0xc7ecf1,transparent:true,opacity:.23,depthWrite:false,side:THREE.DoubleSide,blending:THREE.AdditiveBlending}),group,[0,.55,0]);plume.visible=false;plume.rotation.z=Math.PI;
-    root.add(group);jets.push(plume);
-  });
-  batchStatic(shell);wheels.forEach(w=>batchStatic(w));
-  return {root,shell,wheels,jets};
+  const wing=mesh(shell,new THREE.CapsuleGeometry(.045,1.65,4,16),carbon,[0,deck(-1.98)+.17,-1.98]);wing.rotation.z=Math.PI/2;wing.scale.set(1,1,2);
+  const label=document.createElement('canvas');label.width=512;label.height=64;const ctx=label.getContext('2d');ctx.clearRect(0,0,512,64);ctx.fillStyle='#d1d6d4';ctx.textAlign='center';ctx.font='500 30px sans-serif';ctx.fillText('R O A D S T E R',256,41);
+  const badge=mesh(shell,new THREE.PlaneGeometry(.44,.055),new THREE.MeshStandardMaterial({map:new THREE.CanvasTexture(label),transparent:true,roughness:.5}),[0,.053,-2.345]);badge.rotation.y=Math.PI;
+  const wheels=[],calipers=[];for(let i=0;i<4;i++){const result=createWheel(i%2===0?-1:1);wheels.push(result.wheel);calipers.push(result.caliper);}
+  const nozzleGroups=[];
+  for(const definition of NOZZLES){const group=new THREE.Group();group.position.set(...definition.position);group.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),new THREE.Vector3(...definition.direction));root.add(group);const nozzle=mesh(group,new THREE.CylinderGeometry(.049,.074,.055,24,1,true),alloy,[0,.012,0]);nozzle.material=alloy.clone();nozzle.material.side=THREE.DoubleSide;const throat=mesh(group,new THREE.CircleGeometry(.04,24),carbon,[0,.033,0]);throat.rotation.x=-Math.PI/2;nozzleGroups.push(group);}
+  box(shell,[1.47,.022,3.6],[0,-.24,0],carbon);
+  batchStatic(shell);root.name='Roadster body';
+  return {root,shell,wheels,calipers,nozzleGroups};
 }
